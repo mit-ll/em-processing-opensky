@@ -1,6 +1,6 @@
+function processSplitClean_3(inFile,varargin)
 % Copyright 2018 - 2020, MIT Lincoln Laboratory
 % SPDX-License-Identifier: BSD-2-Clause
-function processSplitClean_3(inFile,varargin)
 
 %% Input parser
 p = inputParser;
@@ -21,6 +21,7 @@ addOptional(p,'outlierAccel_kts_s', 6,@isnumeric); % Maximum absolute accelerati
 addOptional(p,'minSegPoints',10,@(x) @isnumeric && x > 0); % Minimum number of points a segment must have (10 has been the default historically)
 addOptional(p,'thresTimeUpdate_s',seconds(20),@isduration); % Maximum time difference between updates...a value of 20 Ensures there at least 3 data points per minute
 addOptional(p,'maxAlt_ft_msl',85000,@isnumeric); % U2 service ceiling is 80K
+addOptional(p,'minAlt_ft_msl',-115,@isnumeric); % KTRM elevation, https://en.wikipedia.org/wiki/List_of_lowest_airports
 
 % Optional - Segement Processing
 addOptional(p,'interpTimeStep',seconds(1),@isduration);
@@ -39,6 +40,7 @@ addOptional(p,'fileAirspace',[getenv('AEM_DIR_CORE') filesep 'output' filesep 'a
 
 % Optional - Adminstrative Boundaries
 addOptional(p,'Tadmin',table(),@istable);
+addOptional(p,'Tland',table(),@istable);
 
 % Optional - Plot and Display
 addOptional(p,'isPlotSeg',true,@islogical);
@@ -64,13 +66,17 @@ unzip(inFile,tempFolder);
 listing = dir([tempFolder filesep '*.csv']);
 
 % Split filenames
+% Assumes ICAO24 is always last
+% Specifically, if Monday data:
 % 1st: Date, YYYY-mm-DD
 % 2nd: Hour, [0-23]
 % 3rd: ICAO24 address + .csv suffix
 fnsplit = cellfun(@(x)(strsplit(x,'_')),{listing.name}','uni',false);
 
+nf = cellfun(@numel,fnsplit,'uni',false);
+
 % Parse icao24 address and remove .csv suffix
-icao24 = cellfun(@(x)(string(x{3}(1:end-4))),fnsplit,'uni',true);
+icao24 = cellfun(@(x,n)(string(x{n}(1:end-4))),fnsplit,nf,'uni',true);
 
 % Identify unique iaco24 addresses
 [u24,~,ic] = unique(icao24,'stable');
@@ -87,7 +93,8 @@ load(p.Results.fileAirspace,'airspace');
 airB = airspace(airspace.CLASS == 'B',:);
 airC = airspace(airspace.CLASS == 'C',:);
 airD = airspace(airspace.CLASS == 'D',:);
-airE = airspace(airspace.CLASS == 'E',:);
+%airE = airspace(airspace.CLASS == 'E',:); % Not used
+%airF = airspace(airspace.CLASS == 'F',:); % Not used
 
 %% Split track using splitTrack function
 % Iterate over iaco24 addresses
@@ -165,19 +172,22 @@ for i=1:1:n
     iTrack = timetable(rowTimes(iia),lat_deg(iia),lon_deg(iia),alt_baro_ft_msl(iia),alt_geo_ft_msl(iia), speed_ground_kt(iia),logical(onground(iia)),string(squawk(iia)),'VariableNames',{'lat_deg','lon_deg','alt_baro_ft_msl','alt_geo_ft_msl','speed_direct_kt','onground','squawk'});
     
     % Check to see if we have altitude data geometric data, if it is "null", and below the maximum assumed absolute ceiling
+    isGoodAltBaro = iTrack.alt_baro_ft_msl ~= 0 & ~isnan(iTrack.alt_baro_ft_msl) & iTrack.alt_baro_ft_msl <= p.Results.maxAlt_ft_msl & iTrack.alt_baro_ft_msl >= p.Results.minAlt_ft_msl;    % non-zero barometric altitude feet msl
+    isGoodAltGeo = iTrack.alt_geo_ft_msl ~= 0 & ~isnan(iTrack.alt_geo_ft_msl) & iTrack.alt_geo_ft_msl <= p.Results.maxAlt_ft_msl & iTrack.alt_geo_ft_msl >= p.Results.minAlt_ft_msl;       % non-zero geometric altitude feet msl
+    
     switch p.Results.altMode
         case 'baro'
-            isGoodAlt = iTrack.alt_baro_ft_msl ~= 0 & ~isnan(iTrack.alt_baro_ft_msl) & iTrack.alt_baro_ft_msl <= p.Results.maxAlt_ft_msl;    % non-zero barometric altitude feet msl
+            isGoodAlt = isGoodAltBaro;
         case 'geo'
-            isGoodAlt = iTrack.alt_geo_ft_msl ~= 0 & ~isnan(iTrack.alt_geo_ft_msl) & iTrack.alt_geo_ft_msl <= p.Results.maxAlt_ft_msl;       % non-zero geometric altitude feet msl
+            isGoodAlt = isGoodAltGeo;
         case 'both'
-            isGoodAlt =  iTrack.alt_baro_ft_msl ~= 0 & ~isnan(iTrack.alt_baro_ft_msl) & iTrack.alt_baro_ft_msl <= p.Results.maxAlt_ft_msl & iTrack.alt_geo_ft_msl ~= 0 & ~isnan(iTrack.alt_geo_ft_msl) & iTrack.alt_geo_ft_msl <= p.Results.maxAlt_ft_msl;
+            isGoodAlt =  isGoodAltBaro & isGoodAltGeo;
         otherwise
             error('altMode:unknown','altMode must be either ''baro'', ''geo'', or ''both'' ... %s is invalid\n',altMode);
     end
     
-    % Keep points with altitude, not on the ground or don't have an empty squawk
-    l = isGoodAlt & ~iTrack.onground & ~strcmpi(iTrack.squawk,"NaN");
+    % Keep points with good altitude and don't have an empty squawk
+    l = isGoodAlt & ~strcmpi(iTrack.squawk,"NaN");
     iTrack = iTrack(l,:);
     if isempty(iTrack)
         if p.Results.isVerbose
@@ -196,7 +206,7 @@ for i=1:1:n
     segPos = find(~[0 isTimely']);
     g = ones(size(iTrack,1),1);
     counterG = 1;
-    for j=1:1:numel(segPos);
+    for j=1:1:numel(segPos)
         if j < numel(segPos)
             idx = segPos(j):segPos(j+1)-1;
         else
@@ -226,7 +236,7 @@ for i=1:1:n
     % Plot segements
     if p.Results.isPlotSeg
         figure(hex2dec(u24{i})); set(gcf,'name',sprintf('segments: %s',u24(i)));
-        if max(iTrack.g) <=  size(myColorOrder,1);
+        if max(iTrack.g) <=  size(myColorOrder,1)
             colors = myColorOrder(iTrack.g,:);
         else
             colors = repmat(myColorOrder,ceil(max(iTrack.g) / size(myColorOrder,1)),1);
@@ -242,11 +252,11 @@ for i=1:1:n
     isFileOpen = false;
     for j = 1:1:nSeg
         % Close just in case
-        if isFileOpen & j==1; fclose(fid); isFileOpen = false; end;
+        if isFileOpen & j==1; fclose(fid); isFileOpen = false; end
         
         % Filter  segement
         l = iTrack.g == j;
-        jTrack = iTrack(l,1:5);
+        jTrack = iTrack(l,1:7);
         
         % Outlier detection with altitude
         switch p.Results.altMode
@@ -258,61 +268,24 @@ for i=1:1:n
                 isOutAlt = any(isoutlier([jTrack.alt_baro_ft_msl,jTrack.alt_geo_ft_msl],'median','SamplePoints',jTrack.Time,'ThresholdFactor',1.5),2);
         end
         
-        % Smooth
-        jTrackSmooth = smoothdata(jTrack(~isOutAlt,:),'gaussian',seconds(30));
+        % Smooth and append variables not smoothed
+        jTrackSmooth = smoothdata(jTrack(~isOutAlt,1:5),'gaussian',seconds(30));
+        jTrackSmooth = [jTrackSmooth jTrack(~isOutAlt,6:end)];
         
         if size(jTrackSmooth,1) < p.Results.minSegPoints
             if p.Results.isVerbose
-                fprintf('icao24 = %s, j= %i, nSeg = %i, i = %i, n = %i, Segment not long enough after altitude outlier detection...CONTINUE\n',u24(i), j, nSeg, i, n);
+                fprintf('icao24 = %s, j = %i, nSeg = %i, i = %i, n = %i, Segment not long enough after altitude outlier detection...CONTINUE\n',u24(i), j, nSeg, i, n);
             end
             continue
         end
         
-        % Calculate relative time
-        relTime_s = 1 + seconds(jTrackSmooth.Time - jTrackSmooth.Time(1));
+        % Calculate dynamics (speed, turn rate, acceleration, vertical rate)
+        [jTrackSmooth, ~] = CalcDynamics(jTrackSmooth);
         
-        % Calculate Courses and distances between navigational waypoints
-        % Assume that course and track are equivalent...
-        % https://aviation.stackexchange.com/a/8947/1217
-        [course_deg,dist_nm] = legs(jTrackSmooth.lat_deg,jTrackSmooth.lon_deg,'rh');
-        course_deg = [course_deg; course_deg(end)];
-        jTrackSmooth.course_deg = course_deg;
+        % Identify outliers
+        [isGood, ~, ~, ~, ~, ~] = IdentifyOutliers(jTrackSmooth,p);
         
-        % Calculate turn rate assuming its equivlant to course change rate
-        [dpsi_rad_s,deltaHeading,dt] = computeHeadingRate(deg2rad(course_deg),relTime_s);
-        jTrackSmooth.dpsi_deg_s = rad2deg(dpsi_rad_s);
-        
-        % Estimate speed using distance and time
-        speed_estimate_kt = dist_nm ./  hours(diff(jTrackSmooth.Time));
-        jTrackSmooth.speed_estimate_kt = [speed_estimate_kt; speed_estimate_kt(end)];
-        
-        % Calculate acceleration
-        jTrackSmooth.dv_estimate_kt_s = computeAcceleration(jTrackSmooth.speed_estimate_kt,relTime_s,'mode','gradient');
-        jTrackSmooth.dv_direct_kt_s = computeAcceleration(jTrackSmooth.speed_direct_kt,relTime_s,'mode','gradient');
-        
-        % Calculate vertical rate
-        jTrackSmooth.dh_baro_ft_s = computeVerticalRate(jTrackSmooth.alt_baro_ft_msl,relTime_s,'mode','gradient');
-        jTrackSmooth.dh_geo_ft_s = computeVerticalRate(jTrackSmooth.alt_geo_ft_msl,relTime_s,'mode','gradient');
-        jTrackSmooth.dh_baro_ft_s(abs(jTrackSmooth.dh_baro_ft_s) < 1) = 0;
-        jTrackSmooth.dh_geo_ft_s(abs(jTrackSmooth.dh_geo_ft_s) < 1) = 0;
-        
-        % Identify outliers (and calc vertical rate)
-        isOutAcc = jTrackSmooth.dv_estimate_kt_s > p.Results.outlierAccel_kts_s;
-        isOutPsi = jTrackSmooth.dpsi_deg_s > p.Results.outlierTurnRate_deg_s;
-        isOutSpeed = abs(jTrackSmooth.speed_estimate_kt) > p.Results.outlierSpeed_kt;
-        switch p.Results.altMode
-            case 'baro'
-                isOutVertRate = abs(jTrackSmooth.dh_baro_ft_s) > p.Results.outlierVertRate_ft_s;
-            case 'geo'
-                isOutVertRate = abs(jTrackSmooth.dh_geo_ft_s) > p.Results.outlierVertRate_ft_s;
-            case 'both'
-                isOutVertRate = (abs(jTrackSmooth.dh_baro_ft_s) > p.Results.outlierVertRate_ft_s) | (abs(jTrackSmooth.dh_geo_ft_s) > p.Results.outlierVertRate_ft_s);
-        end
-        
-        % Aggregate all outlier logicals
-        isOut = isOutAcc | isOutPsi | isOutSpeed | isOutVertRate;
-        isGood = ~isOut;
-        
+        % Make sure there are enough points
         if sum(isGood) < p.Results.minSegPoints
             if p.Results.isVerbose
                 fprintf('icao24 = %s, j= %i, nSeg = %i, i = %i, n = %i, Segment not long enough after dynamics outlier detection...CONTINUE\n',u24(i), j, nSeg, i, n);
@@ -320,62 +293,22 @@ for i=1:1:n
             continue
         end
         
-        % Interpolate to desired timestep (default should be one second)
-        jTrackInterp = retime(jTrackSmooth(isGood,:),'regular','pchip','TimeStep',p.Results.interpTimeStep);
+        % Interpolate
+        jTrackInterp = InterpolateTrack(jTrackSmooth, isGood, p.Results.interpTimeStep);
         
-        % Plot
-        if p.Results.isPlotRates
-            figure; set(gcf,'name',sprintf('Rates: %s - %i',u24(i),j));
-            stackedplot(jTrackInterp(:,3:end),{{'alt_baro_ft_msl','alt_geo_ft_msl'},{'dh_baro_ft_s','dh_geo_ft_s'},{'speed_estimate_kt','speed_direct_kt'},{'dv_estimate_kt_s','dv_direct_kt_s'},'dpsi_deg_s'}); grid on
-        end
+        % Identify Airspace Variable
+        % Individual airspace classes parsed out above for speed improvements
+        [jTrackInterp.A, alt4Airspace_ft_msl] = IdentifyAirspaceVariable(jTrackInterp, p.Results.altMode, airB, airC, airD);
         
-        % Airspace
-        switch p.Results.altMode
-            case 'baro'
-                alt4Airspace_ft_msl = jTrackInterp.alt_baro_ft_msl;
-            case 'geo'
-                alt4Airspace_ft_msl = jTrackInterp.alt_geo_ft_msl;
-            case 'both'
-                alt4Airspace_ft_msl = mean([jTrackInterp.alt_baro_ft_msl,jTrackInterp.alt_geo_ft_msl],2);
-        end
-        [isD,~] = identifyairspace(airD, jTrackInterp.lat_deg, jTrackInterp.lon_deg, alt4Airspace_ft_msl,'msl');
-        [isC,~] = identifyairspace(airC, jTrackInterp.lat_deg, jTrackInterp.lon_deg, alt4Airspace_ft_msl,'msl');
-        [isB,~] = identifyairspace(airB, jTrackInterp.lat_deg, jTrackInterp.lon_deg, alt4Airspace_ft_msl,'msl');
-        A = repmat(4,size(jTrackInterp,1),1);
-        A(isB) = 1;
-        A(isC) = 2;
-        A(isD) = 3;
-        jTrackInterp.A = A;
+        % Identify adminstrative boundary
+        jTrackInterp.geoname_id = IdentifyGeoname(jTrackInterp,Tadmin);
         
-        % Get terrain elevation
-        % In dted():
-        % If a directory name is supplied instead of a file name and LATLIM
-        % spans either 50 degrees North or 50 degrees South, an error results.
-        if contains(p.Results.dem,{'srtm','dted'}) & (min(jTrackInterp.lat_deg) < -50 && max(jTrackInterp.lat_deg) > -50) || (min(jTrackInterp.lat_deg) < 50 && max(jTrackInterp.lat_deg) > 50)
-            warning('process:dted:latlimSpans50','DEMs in the DTED format will throw an error if the latitude limit spans either 50 degrees North or 50 degrees South, trying backup DEM\n');
-            el_ft_msl = [];
-        else
-            try
-                [el_ft_msl,~,~,~] = msl2agl(jTrackInterp.lat_deg, jTrackInterp.lon_deg, p.Results.dem,'demDir',p.Results.demDir,...
-                    'maxMissingPercent',0.8,'isCheckOcean',true,'isFillAverage',true,'isVerbose',true);
-            catch err
-                warning('process:msl2agl:error','Got error when calling ms2agl, trying backup DEM\n');
-                el_ft_msl = [];
-            end
-        end
-        if isempty(el_ft_msl)
-            [el_ft_msl,~,~,~] = msl2agl(jTrackInterp.lat_deg, jTrackInterp.lon_deg, p.Results.demBackup,'demDir',p.Results.demDirBackup,...
-                'maxMissingPercent',0.8,'isCheckOcean',true,'isFillAverage',true,'isVerbose',true);
-        end
-        if isempty(el_ft_msl)
+        % Identify elevation and altitude AGL
+        [jTrackInterp,isEmptyEl] = IdentifyAltAGL(jTrackInterp,p);
+        if isEmptyEl
             warning('el_ft_msl:empty','icao24 = %s, i = %i, j = %i, el_ft_msl is empty, skipping track segement...CONTINUE\n',u24(i),i,j);
             continue
         end
-        
-        % Convert from msl to agl
-        jTrackInterp.alt_baro_ft_agl = round(jTrackInterp.alt_baro_ft_msl - el_ft_msl);
-        jTrackInterp.alt_geo_ft_agl = round(jTrackInterp.alt_geo_ft_msl - el_ft_msl);
-        jTrackInterp.el_ft_msl = el_ft_msl;
         
         % Transform geodetic coordinates to geocentric Earth-centered Earth-fixed
         [xECEF,yECEF,zECEF]=geodetic2ecef(jTrackInterp.lat_deg, jTrackInterp.lon_deg, alt4Airspace_ft_msl, spheroid_ft,'degrees');
@@ -383,24 +316,11 @@ for i=1:1:n
         % Transform geocentric Earth-centered Earth-fixed coordinates to local east-north-up
         [jTrackInterp.xLocalEast_ft,jTrackInterp.yLocalNorth_ft,~] = ecef2enu(xECEF,yECEF,zECEF,jTrackInterp.lat_deg(1),jTrackInterp.lon_deg(1),0,spheroid_ft,'degrees');
         
-        % preallocate adminstrative boundary
-        % We use the gn_id (geonames id) instead of iso_3166_2 because
-        % gn_id is a numeric and iso_3166_2 is not. Having gn_id as a
-        % numeric makes it easier when outputting to file as all the
-        % other outputs are numeric too
-        geoname_id = zeros(size(jTrackInterp,1),1);
-        
-        % Identify adminstrative boundary
-        if ~isempty(Tadmin)
-            % Check which points are in which iso 3166-2 polygons
-            isBound = cellfun(@(lat,lon)(InPolygon(jTrackInterp.lat_deg,jTrackInterp.lon_deg,lat,lon)),Tadmin.lat_deg,Tadmin.lon_deg,'UniformOutput',false);
-            
-            % Iterate thorugh iso 3166-2 and assign
-            for jj=1:1:numel(isBound)
-                geoname_id(isBound{jj}) = Tadmin.gn_id(jj);
-            end
+        % Plot
+        if p.Results.isPlotRates
+            figure; set(gcf,'name',sprintf('Rates: %s - %i',u24(i),j));
+            stackedplot(jTrackInterp(:,3:end),{{'alt_baro_ft_msl','alt_geo_ft_msl'},{'dh_baro_ft_s','dh_geo_ft_s'},{'speed_estimate_kt','speed_direct_kt'},{'dv_estimate_kt_s','dv_direct_kt_s'},'dpsi_deg_s'}); grid on
         end
-        jTrackInterp.geoname_id = geoname_id;
         
         % Write to file
         outFileFull = strcat(p.Results.outDir, filesep, u24(i), '.csv');
@@ -417,13 +337,13 @@ for i=1:1:n
             end
             isFileOpen = true; % Denote file is open
             
-            colNames = 'id,time_s,lat_deg,lon_deg,local_east_ft,local_north_ft,alt_baro_ft_msl,alt_geo_ft_msl,alt_baro_ft_agl,alt_geo_ft_agl,el_ft_msl,dh_baro_ft_s,dh_geo_ft_s,course_deg,dpsi_deg_s,speed_estimate_kt,speed_direct_kt,dv_estimate_kt_s,dv_direct_kt_s,A,geoname_id';
+            colNames = 'id,time_s,lat_deg,lon_deg,local_east_ft,local_north_ft,alt_baro_ft_msl,alt_geo_ft_msl,alt_baro_ft_agl,alt_geo_ft_agl,el_ft_msl,dh_baro_ft_s,dh_geo_ft_s,course_deg,dpsi_deg_s,speed_estimate_kt,speed_direct_kt,dv_estimate_kt_s,dv_direct_kt_s,onground,squawk,A,geoname_id';
             colNum = numel(strfind(colNames,',')) + 1;
             fprintf(fid,[colNames '\n']);
         end
         
         % Write to file
-        fprintf(fid,['%0.0f,%0.0f,%0.16f,%0.16f,%0.16f,%0.16f,' repmat('%0.2f,',1,colNum-8) '%0.2f,%0.0f\n'],[repmat(j,size(jTrackInterp,1),1),posixtime(jTrackInterp.Time),jTrackInterp.lat_deg,jTrackInterp.lon_deg,jTrackInterp.xLocalEast_ft,jTrackInterp.yLocalNorth_ft,jTrackInterp.alt_baro_ft_msl,jTrackInterp.alt_geo_ft_msl,jTrackInterp.alt_baro_ft_agl,jTrackInterp.alt_geo_ft_agl,jTrackInterp.el_ft_msl,jTrackInterp.dh_baro_ft_s,jTrackInterp.dh_geo_ft_s,jTrackInterp.course_deg,jTrackInterp.dpsi_deg_s,jTrackInterp.speed_estimate_kt,jTrackInterp.speed_direct_kt,jTrackInterp.dv_estimate_kt_s,jTrackInterp.dv_direct_kt_s,jTrackInterp.A,jTrackInterp.geoname_id]');
+        fprintf(fid,['%0.0f,%0.0f,%0.16f,%0.16f,%0.16f,%0.16f,' repmat('%0.2f,',1,colNum-10) '%0.0f,%s,%0.2f,%0.0f\n'],[repmat(j,size(jTrackInterp,1),1),posixtime(jTrackInterp.Time),jTrackInterp.lat_deg,jTrackInterp.lon_deg,jTrackInterp.xLocalEast_ft,jTrackInterp.yLocalNorth_ft,jTrackInterp.alt_baro_ft_msl,jTrackInterp.alt_geo_ft_msl,jTrackInterp.alt_baro_ft_agl,jTrackInterp.alt_geo_ft_agl,jTrackInterp.el_ft_msl,jTrackInterp.dh_baro_ft_s,jTrackInterp.dh_geo_ft_s,jTrackInterp.course_deg,jTrackInterp.dpsi_deg_s,jTrackInterp.speed_estimate_kt,jTrackInterp.speed_direct_kt,jTrackInterp.dv_estimate_kt_s,jTrackInterp.dv_direct_kt_s,jTrackInterp.onground,jTrackInterp.squawk,jTrackInterp.A,jTrackInterp.geoname_id]');
         
         % Close file on last segment
         if j==nSeg; closeStatus = fclose(fid); isFileOpen = false; end
