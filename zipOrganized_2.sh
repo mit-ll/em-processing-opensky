@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# $1 : Name of directory to be deleted
+# $1 : Directory to be archived
 #
 # This script can be called directly or by a run script
 
