@@ -150,10 +150,26 @@ u24 = upper(u24);
 Traw = table(u24,repmat("Unknown",size(u24)),strings(size(u24)),strings(size(u24)),accumarray(ic,1),true(size(u24)),strings(size(u24)),strings(size(u24)),...
     'VariableNames',{'icao24','acType','acMfr','acModel','nReports','isAllAboveFL180','folderOrganize','fullPath'});
 
+%% Aircraft Type and Number of Reports
+% Convert iaco24 and squawk
+icao24 = upper(string(icao24));
+squawk = str2double(string(squawk));
+
+% Unique ICAO24 addresses
+[u24,ia,ic] = unique(icao24,'stable');
+
+% Create table
+Traw = table(u24,repmat("Unknown",size(u24)),strings(size(u24)),strings(size(u24)),accumarray(ic,1),true(size(u24)),strings(size(u24)),strings(size(u24)),...
+    'VariableNames',{'icao24','acType','acMfr','acModel','nReports','isAllAboveFL180','folderOrganize','fullPath'});
+
 % Determine aircraft type
-for i=i:1:numel(u24)
-    idx = find(contains(modeSHex,u24(i)));
-    if ~isempty(idx)
+for i=1:1:numel(u24)
+    % Calculate logical index
+    l24 = contains(modeSHex,u24(i),'IgnoreCase',true);
+    
+    % Do something if ith icao24 bit address is found in the aircraft registry
+    if any(l24)
+        idx = find(l24);
         Traw.acType(i) = acType(idx);
         Traw.acMfr(i) = acMfr(idx);
         Traw.acModel(i) = acModel(idx);
@@ -169,7 +185,6 @@ uType = unique(Traw.acType);
 
 % Display status
 fprintf('Identified %i unique aircraft types\n',numel(uType));
-
 %% Create subdirectories for unknown aircraft type
 % Most of these directories should already exist,
 % but we still do the ~exist / mkdir combo to make sure
