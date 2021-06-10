@@ -1,6 +1,8 @@
+function countsARC = countAirRiskClass(lat_deg,lon_deg,alt_baro_ft,alt_geo_ft,geoname_id,varargin)
 % Copyright 2018 - 2020, MIT Lincoln Laboratory
 % SPDX-License-Identifier: BSD-2-Clause
-function countsARC = countAirRiskClass(lat_deg,lon_deg,alt_baro_ft,alt_geo_ft,geoname_id,varargin)
+% SEE ALSO calcAircraftFrequency_4 countAirspaceAltitude
+
 %% Input parser
 p = inputParser;
 
@@ -83,6 +85,7 @@ if any(isGeoname)
     lg = ~isnan(alt_geo_ft) & alt_geo_ft <= p.Results.maxAlt_ft & alt_geo_ft >= p.Results.minAlt_ft ;
     
     % Boundary of all coordinates
+    % This is used to identify points where we have ARC values
     % convhull() is slightly faster than boundary(), but boundary will filter out
     % more points which makes the distance calculation below faster
     % Make sure we have enough points to a form a boundary (e.g. 2 points is a line)
@@ -98,11 +101,15 @@ if any(isGeoname)
         end
     end
     
+    % If the track is a straight line, boundary will return an
+    % empty [] array. This will cause InPolygon below to seg fault
+    if isempty(k); k = 1:1:numel(lat_deg); end;
+    
     % Find index of Tadmin by comparing geoname ids
-    idxAdmin = arrayfun(@(x)(find(x == Tadmin.gn_id)),geoname_id);
+    [~,idxAdmin,~] = intersect(Tadmin.gn_id,geoname_id,'stable');
     
     % Filter ARC files based on iso_3166_2
-    iarc = Tarc(ismember(Tarc.iso_3166_2,Tadmin.iso_3166_2(unique(idxAdmin))),:);
+    iarc = Tarc(ismember(Tarc.iso_3166_2,Tadmin.iso_3166_2(idxAdmin)),:);
     
     if ~isempty(iarc)
         % Sort by altitude
