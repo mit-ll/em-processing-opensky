@@ -28,6 +28,7 @@ This repository is a collection of shell scripts and MATLAB code to process raw 
       - [Identify cleaned track segments](#identify-cleaned-track-segments)
     - [4. Aircraft Model Statistics](#4-aircraft-model-statistics)
   - [Citation](#citation)
+    - [Software](#software)
     - [Processing](#processing)
     - [OpenSky Network](#opensky-network)
     - [LLSC](#llsc)
@@ -331,25 +332,33 @@ The `countsSeats` ("counts - seats") cell contains a numeric matrix that counts 
 
 Please use the appropriate documents listed in [`em-overview/README`](https://github.com/Airspace-Encounter-Models/em-overview/blob/master/README.md#documentation) when citing the technical concepts.
 
+### Software
+
+Please use this DOI number reference when citing the software:
+
+[![DOI](https://zenodo.org/badge/298034848.svg)](https://zenodo.org/badge/latestdoi/298034848)
+
 ### Processing
 
 For referencing the use of OpenSky Network data for encounter model development, please use this current article:
 
-<details> <summary> A. Weinert, N. Underhill, B. Gill, and A. Wicks, “Processing of Crowdsourced Observations of Aircraft in a High Performance Computing Environment,” arXiv:2008.00861 [cs], Aug. 2020.</summary>
+<details> <summary> A. Weinert, N. Underhill, B. Gill, and A. Wicks, “Processing of Crowdsourced Observations of Aircraft in a High Performance Computing Environment,” in 2020 IEEE High Performance Extreme Computing Conference (HPEC), Sep. 2020, pp. 1–6. doi: 10.1109/HPEC43674.2020.9286229.
+</summary>
 <p>
 
 ```tex
-@article{weinertProcessingCrowdsourcedObservations2020,
-  url = {http://arxiv.org/abs/2008.00861},
-  archivePrefix = {arXiv},
-  eprinttype = {arxiv},
-  eprint = {2008.00861},
-  primaryClass = {cs},
+@inproceedings{weinertProcessingCrowdsourcedObservations2020c,
   title = {Processing of {{Crowdsourced Observations}} of {{Aircraft}} in a {{High Performance Computing Environment}}},
-  author = {Weinert, Andrew and Underhill, Ngaire and Gill, Bilal and Wicks, Ashley},
-  month = aug,
+  booktitle = {2020 {{IEEE High Performance Extreme Computing Conference}} ({{HPEC}})},
+  author = {Weinert, A. and Underhill, N. and Gill, B. and Wicks, A.},
   year = {2020},
-  keywords = {Computer Science - Computational Engineering; Finance; and Science,Computer Science - Distributed; Parallel; and Cluster Computing,E.2,H.3,I.6.5}
+  month = sep,
+  pages = {1--6},
+  publisher = {{IEEE}},
+  issn = {2643-1971},
+  doi = {10.1109/HPEC43674.2020.9286229},
+  abstract = {As unmanned aircraft systems (UASs) continue to integrate into the U.S. National Airspace System (NAS), there is a need to quantify the risk of airborne collisions between unmanned and manned aircraft to support regulation and standards development. Both regulators and standards developing organizations have made extensive use of Monte Carlo collision risk analysis simulations using probabilistic models of aircraft flight. We've previously determined that the observations of manned aircraft by the OpenSkyNetwork, a community network of ground-based sensors, are appropriate to develop models of the low altitude environment. This works overviews the high performance computing workflow designed and deployed on the Lincoln Laboratory Supercomputing Center to process3.9 billion observations of aircraft. We then trained the aircraft models using more than 250,000 flighthours at 5,000 feet above ground level or below. A key feature of the workflow is that all the aircraft observations and supporting datasets are available as open source technologies or been released to the public domain.},
+  keywords = {aerospace control,Aircraft,Analytical models,Atmospheric modeling,Computational modeling,geospatial analysis,High performance computing,open source software,Organizations,simulation,Standards organizations}
 }
 ```
 </p>
